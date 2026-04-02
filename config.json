@@ -1,0 +1,28 @@
+{
+  "max_active_trades": 6,
+  "trade_amount_usd": 100,
+  "poll_interval_seconds": 10,
+  "request_timeout_seconds": 10,
+  "max_retries": 3,
+  "retry_backoff_seconds": 1.5,
+  "tokens": [
+    {
+      "symbol": "ETH-USDT",
+      "buy_drop_pct": -25,
+      "buy_drop_reference_price": null,
+      "buy_price": null,
+      "sell_profit_pct": 25,
+      "sell_price": null,
+      "stop_loss_pct": -10
+    },
+    {
+      "symbol": "ARB-USDT",
+      "buy_drop_pct": null,
+      "buy_drop_reference_price": null,
+      "buy_price": 1.2,
+      "sell_profit_pct": null,
+      "sell_price": 1.6,
+      "stop_loss_pct": -10
+    }
+  ]
+}

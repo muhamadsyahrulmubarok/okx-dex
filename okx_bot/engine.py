@@ -6,9 +6,9 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Callable
 
-from okx_bot.client import OkxClient
 from okx_bot.config import BotConfig, TokenRule
 from okx_bot.domain import Position
+from okx_bot.exchange import ExchangeAdapter
 from okx_bot.risk import RiskController
 from okx_bot.storage import PositionStore
 from okx_bot.telegram import Notifier, NullNotifier
@@ -23,45 +23,6 @@ ErrorEventCallback = Callable[[dict[str, Any]], None]
 class SymbolSnapshot:
     current_price: float
     reference_price: float | None
-
-
-class TradeExecutor:
-    def __init__(self, client: OkxClient, dry_run: bool = False) -> None:
-        self.client = client
-        self.dry_run = dry_run
-
-    def estimate_base_quantity(self, amount_usd: float, price: float) -> float:
-        if price <= 0:
-            raise ValueError("Price must be > 0")
-        return amount_usd / price
-
-    def buy(self, symbol: str, amount_usd: float, price: float) -> tuple[float, dict[str, Any]]:
-        estimated_qty = self.estimate_base_quantity(amount_usd, price)
-        if self.dry_run:
-            logger.info("[DRY-RUN] BUY %s notional_usd=%s @ %s", symbol, amount_usd, price)
-            return estimated_qty, {
-                "dry_run": True,
-                "side": "buy",
-                "symbol": symbol,
-                "notional_usd": amount_usd,
-                "estimated_quantity": estimated_qty,
-            }
-        # For spot market BUY on OKX, quote_ccy means sz is quote amount (e.g. 100 USDT).
-        order_result = self.client.place_market_order(symbol, "buy", amount_usd, tgt_ccy="quote_ccy")
-        filled_qty = estimated_qty
-        try:
-            data = order_result.get("data") or []
-            if data and data[0].get("fillSz"):
-                filled_qty = float(data[0]["fillSz"])
-        except (TypeError, ValueError):
-            logger.debug("Could not parse fillSz from order response for %s", symbol)
-        return filled_qty, order_result
-
-    def sell(self, symbol: str, quantity: float) -> dict[str, Any]:
-        if self.dry_run:
-            logger.info("[DRY-RUN] SELL %s qty=%s", symbol, quantity)
-            return {"dry_run": True, "side": "sell", "symbol": symbol, "quantity": quantity}
-        return self.client.place_market_order(symbol, "sell", quantity)
 
 
 class PositionManager:
@@ -127,7 +88,7 @@ class BotRunner:
     def __init__(
         self,
         config: BotConfig,
-        client: OkxClient,
+        exchange: ExchangeAdapter,
         store: PositionStore,
         *,
         dry_run: bool = False,
@@ -139,8 +100,8 @@ class BotRunner:
         self.reference_prices: dict[str, float] = {}
         self.signal_engine = SignalEngine()
         self.config = config
-        self.client = client
-        self.trade_executor = TradeExecutor(client, dry_run=dry_run)
+        self.exchange = exchange
+        self.dry_run = dry_run
         self.risk_controller = RiskController(
             max_active_trades=config.max_active_trades,
             trade_amount_usd=config.trade_amount_usd,
@@ -153,13 +114,13 @@ class BotRunner:
         self,
         *,
         config: BotConfig,
-        client: OkxClient,
+        exchange: ExchangeAdapter,
         dry_run: bool,
         notifier: Notifier | None,
     ) -> None:
         self.config = config
-        self.client = client
-        self.trade_executor = TradeExecutor(client, dry_run=dry_run)
+        self.exchange = exchange
+        self.dry_run = dry_run
         self.risk_controller = RiskController(
             max_active_trades=config.max_active_trades,
             trade_amount_usd=config.trade_amount_usd,
@@ -197,14 +158,14 @@ class BotRunner:
         except Exception:
             logger.exception("Failed to emit error event")
 
-    def _load_price(self, symbol: str) -> float:
-        return self.client.get_last_price(symbol)
+    def _load_price(self, token: TokenRule) -> float:
+        return self.exchange.get_price(token)
 
     def run_cycle(self) -> None:
         for token in self.config.tokens:
             symbol = token.symbol
             try:
-                current_price = self._load_price(symbol)
+                current_price = self._load_price(token)
 
                 if symbol not in self.reference_prices:
                     self.reference_prices[symbol] = current_price
@@ -231,11 +192,7 @@ class BotRunner:
                     should_buy, reason = self.signal_engine.should_buy(token, snapshot)
                     if should_buy:
                         trade_size_usd = self.risk_controller.trade_size_usd()
-                        qty, order_result = self.trade_executor.buy(
-                            symbol=symbol,
-                            amount_usd=trade_size_usd,
-                            price=current_price,
-                        )
+                        qty, order_result = self.exchange.buy(token, trade_size_usd, current_price)
                         self.position_manager.open_position(
                             Position(
                                 symbol=symbol,
@@ -259,7 +216,8 @@ class BotRunner:
                                 f"Qty: {qty:.8f}\n"
                                 f"Size: ${trade_size_usd:.2f}\n"
                                 f"Reason: {reason}\n"
-                                f"Mode: {'DRY-RUN' if self.trade_executor.dry_run else 'LIVE'}"
+                                f"Mode: {'DRY-RUN' if self.dry_run else 'LIVE'}\n"
+                                f"Exchange: {self.exchange.mode}"
                             )
                         )
                         self._emit_trade_event(
@@ -270,7 +228,8 @@ class BotRunner:
                                 "quantity": qty,
                                 "notional_usd": trade_size_usd,
                                 "reason": reason,
-                                "mode": "DRY-RUN" if self.trade_executor.dry_run else "LIVE",
+                                "mode": "DRY-RUN" if self.dry_run else "LIVE",
+                                "exchange_mode": self.exchange.mode,
                                 "raw_order": order_result,
                             }
                         )
@@ -281,7 +240,7 @@ class BotRunner:
                         token, position, current_price
                     )
                     if should_sell:
-                        order_result = self.trade_executor.sell(symbol, position.quantity)
+                        order_result = self.exchange.sell(token, position.quantity, current_price)
                         self.position_manager.close_position(symbol)
                         logger.info(
                             "SELL %s @ %.6f qty=%s pnl=%.2f%% reason=%s",
@@ -298,7 +257,8 @@ class BotRunner:
                                 f"Qty: {position.quantity:.8f}\n"
                                 f"PnL: {position.pnl_pct(current_price):.2f}%\n"
                                 f"Reason: {reason}\n"
-                                f"Mode: {'DRY-RUN' if self.trade_executor.dry_run else 'LIVE'}"
+                                f"Mode: {'DRY-RUN' if self.dry_run else 'LIVE'}\n"
+                                f"Exchange: {self.exchange.mode}"
                             )
                         )
                         self._emit_trade_event(
@@ -310,7 +270,8 @@ class BotRunner:
                                 "notional_usd": current_price * position.quantity,
                                 "pnl_pct": position.pnl_pct(current_price),
                                 "reason": reason,
-                                "mode": "DRY-RUN" if self.trade_executor.dry_run else "LIVE",
+                                "mode": "DRY-RUN" if self.dry_run else "LIVE",
+                                "exchange_mode": self.exchange.mode,
                                 "raw_order": order_result,
                             }
                         )
@@ -322,11 +283,12 @@ class BotRunner:
                     {
                         "symbol": symbol,
                         "message": "Error while processing symbol",
-                        "mode": "DRY-RUN" if self.trade_executor.dry_run else "LIVE",
+                        "mode": "DRY-RUN" if self.dry_run else "LIVE",
+                        "exchange_mode": self.exchange.mode,
                     }
                 )
                 self._notify(
-                    f"ERROR processing {symbol}\nCheck bot logs for details.\nMode: {'DRY-RUN' if self.trade_executor.dry_run else 'LIVE'}"
+                    f"ERROR processing {symbol}\nCheck bot logs for details.\nMode: {'DRY-RUN' if self.dry_run else 'LIVE'}\nExchange: {self.exchange.mode}"
                 )
 
     def positions_report(self) -> dict[str, dict[str, float | str]]:

@@ -1,28 +1,52 @@
 {
+  "market_type": "CEX",
   "max_active_trades": 6,
   "trade_amount_usd": 100,
   "poll_interval_seconds": 10,
   "request_timeout_seconds": 10,
   "max_retries": 3,
   "retry_backoff_seconds": 1.5,
+  "dex_base_url": "https://web3.okx.com",
+  "dex_project_id": null,
+  "dex_chain_id": null,
+  "dex_quote_token_address": null,
+  "dex_quote_token_decimals": 6,
+  "dex_slippage": 0.005,
+  "dex_wallet_address": null,
+  "dex_private_key": null,
+  "dex_rpc_url": null,
+  "dex_live_execute": false,
+  "dex_price_probe_quote_amount": 1.0,
   "tokens": [
     {
       "symbol": "ETH-USDT",
+      "market_type": "CEX",
       "buy_drop_pct": -25,
       "buy_drop_reference_price": null,
       "buy_price": null,
       "sell_profit_pct": 25,
       "sell_price": null,
-      "stop_loss_pct": -10
+      "stop_loss_pct": -10,
+      "dex_chain_id": null,
+      "dex_token_address": null,
+      "dex_quote_token_address": null,
+      "dex_quote_token_decimals": null,
+      "dex_slippage": null
     },
     {
-      "symbol": "ARB-USDT",
+      "symbol": "ARB-USDT (DEX EXAMPLE)",
+      "market_type": "DEX",
       "buy_drop_pct": null,
       "buy_drop_reference_price": null,
       "buy_price": 1.2,
       "sell_profit_pct": null,
       "sell_price": 1.6,
-      "stop_loss_pct": -10
+      "stop_loss_pct": -10,
+      "dex_chain_id": "1",
+      "dex_token_address": "0x912ce59144191c1204e64559fe8253a0e49e6548",
+      "dex_quote_token_address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "dex_quote_token_decimals": 6,
+      "dex_slippage": 0.005
     }
   ]
 }

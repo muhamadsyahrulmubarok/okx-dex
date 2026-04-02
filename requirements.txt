@@ -3,3 +3,4 @@ python-dotenv
 flask
 flask-cors
 flask-sock
+web3

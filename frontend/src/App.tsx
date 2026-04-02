@@ -44,11 +44,17 @@ export function App() {
 
   const [newToken, setNewToken] = useState({
     symbol: "",
+    market_type: "CEX",
     buy_drop_pct: "",
     buy_price: "",
     sell_profit_pct: "",
     sell_price: "",
     stop_loss_pct: "",
+    dex_chain_id: "",
+    dex_token_address: "",
+    dex_quote_token_address: "",
+    dex_quote_token_decimals: "",
+    dex_slippage: "",
   });
 
   async function refreshAll() {
@@ -113,6 +119,7 @@ export function App() {
   async function addToken() {
     const payload: Record<string, unknown> = {
       symbol: newToken.symbol.trim(),
+      market_type: newToken.market_type.trim().toUpperCase(),
       is_active: true,
     };
     for (const key of [
@@ -121,9 +128,22 @@ export function App() {
       "sell_profit_pct",
       "sell_price",
       "stop_loss_pct",
+      "dex_slippage",
     ]) {
       const value = (newToken as Record<string, string>)[key];
       if (value !== "") payload[key] = Number(value);
+    }
+    for (const key of [
+      "dex_chain_id",
+      "dex_token_address",
+      "dex_quote_token_address",
+      "dex_quote_token_decimals",
+    ]) {
+      const value = (newToken as Record<string, string>)[key];
+      if (value !== "") {
+        payload[key] =
+          key === "dex_quote_token_decimals" ? Number(value) : value.trim();
+      }
     }
     await api("/api/tokens", {
       method: "POST",
@@ -131,11 +151,17 @@ export function App() {
     });
     setNewToken({
       symbol: "",
+      market_type: "CEX",
       buy_drop_pct: "",
       buy_price: "",
       sell_profit_pct: "",
       sell_price: "",
       stop_loss_pct: "",
+      dex_chain_id: "",
+      dex_token_address: "",
+      dex_quote_token_address: "",
+      dex_quote_token_decimals: "",
+      dex_slippage: "",
     });
     await refreshAll();
   }
@@ -180,6 +206,13 @@ export function App() {
         <section className="card">
           <h2>Strategy Settings</h2>
           <label>
+            Market Type (CEX/DEX)
+            <input
+              value={toDisplay(settings.market_type)}
+              onChange={(e) => updateSetting("market_type", e.target.value)}
+            />
+          </label>
+          <label>
             Trade Amount USD
             <input
               value={toDisplay(settings.trade_amount_usd)}
@@ -207,6 +240,90 @@ export function App() {
               onChange={(e) => updateSetting("dry_run", e.target.value)}
             />
           </label>
+          <h3>DEX runtime</h3>
+          <label>
+            DEX Base URL
+            <input
+              value={toDisplay(settings.dex_base_url)}
+              onChange={(e) => updateSetting("dex_base_url", e.target.value)}
+            />
+          </label>
+          <label>
+            DEX Project ID
+            <input
+              value={toDisplay(settings.dex_project_id)}
+              onChange={(e) => updateSetting("dex_project_id", e.target.value)}
+            />
+          </label>
+          <label>
+            DEX Chain ID (e.g. 1)
+            <input
+              value={toDisplay(settings.dex_chain_id)}
+              onChange={(e) => updateSetting("dex_chain_id", e.target.value)}
+            />
+          </label>
+          <label>
+            DEX Quote Token Address (e.g. USDT)
+            <input
+              value={toDisplay(settings.dex_quote_token_address)}
+              onChange={(e) =>
+                updateSetting("dex_quote_token_address", e.target.value)
+              }
+            />
+          </label>
+          <label>
+            DEX Quote Token Decimals
+            <input
+              value={toDisplay(settings.dex_quote_token_decimals)}
+              onChange={(e) =>
+                updateSetting("dex_quote_token_decimals", e.target.value)
+              }
+            />
+          </label>
+          <label>
+            DEX Slippage (0-1)
+            <input
+              value={toDisplay(settings.dex_slippage)}
+              onChange={(e) => updateSetting("dex_slippage", e.target.value)}
+            />
+          </label>
+          <label>
+            DEX Wallet Address
+            <input
+              value={toDisplay(settings.dex_wallet_address)}
+              onChange={(e) => updateSetting("dex_wallet_address", e.target.value)}
+            />
+          </label>
+          <label>
+            DEX RPC URL
+            <input
+              value={toDisplay(settings.dex_rpc_url)}
+              onChange={(e) => updateSetting("dex_rpc_url", e.target.value)}
+            />
+          </label>
+          <label>
+            DEX Live Execute (0/1)
+            <input
+              value={toDisplay(settings.dex_live_execute)}
+              onChange={(e) => updateSetting("dex_live_execute", e.target.value)}
+            />
+          </label>
+          <label>
+            DEX Price Probe Quote Amount
+            <input
+              value={toDisplay(settings.dex_price_probe_quote_amount)}
+              onChange={(e) =>
+                updateSetting("dex_price_probe_quote_amount", e.target.value)
+              }
+            />
+          </label>
+          <label>
+            DEX Private Key
+            <input
+              value={toDisplay(settings.dex_private_key)}
+              onChange={(e) => updateSetting("dex_private_key", e.target.value)}
+            />
+          </label>
           <button onClick={saveSettings}>Save Settings</button>
         </section>
       </div>
@@ -219,11 +336,14 @@ export function App() {
               <tr>
                 <th>ID</th>
                 <th>Symbol</th>
+                <th>Market</th>
                 <th>Buy Drop %</th>
                 <th>Buy Price</th>
                 <th>Sell Profit %</th>
                 <th>Sell Price</th>
                 <th>Stop Loss %</th>
+                <th>DEX Chain</th>
+                <th>DEX Token</th>
                 <th>Active</th>
                 <th>Action</th>
               </tr>
@@ -233,11 +353,14 @@ export function App() {
                 <tr key={String(t.id)}>
                   <td>{toDisplay(t.id)}</td>
                   <td>{toDisplay(t.symbol)}</td>
+                  <td>{toDisplay(t.market_type)}</td>
                   <td>{toDisplay(t.buy_drop_pct)}</td>
                   <td>{toDisplay(t.buy_price)}</td>
                   <td>{toDisplay(t.sell_profit_pct)}</td>
                   <td>{toDisplay(t.sell_price)}</td>
                   <td>{toDisplay(t.stop_loss_pct)}</td>
+                  <td>{toDisplay(t.dex_chain_id)}</td>
+                  <td>{toDisplay(t.dex_token_address)}</td>
                   <td>{toDisplay(t.is_active)}</td>
                   <td>
                     <button onClick={() => deleteToken(Number(t.id))}>Delete</button>
@@ -251,6 +374,13 @@ export function App() {
               placeholder="SYMBOL (e.g. ETH-USDT)"
               value={newToken.symbol}
               onChange={(e) => setNewToken((p) => ({ ...p, symbol: e.target.value }))}
+            />
+            <input
+              placeholder="market_type (CEX/DEX)"
+              value={newToken.market_type}
+              onChange={(e) =>
+                setNewToken((p) => ({ ...p, market_type: e.target.value }))
+              }
             />
             <input
               placeholder="buy_drop_pct"
@@ -278,6 +408,40 @@ export function App() {
               placeholder="stop_loss_pct"
               value={newToken.stop_loss_pct}
               onChange={(e) => setNewToken((p) => ({ ...p, stop_loss_pct: e.target.value }))}
+            />
+            <input
+              placeholder="dex_chain_id"
+              value={newToken.dex_chain_id}
+              onChange={(e) => setNewToken((p) => ({ ...p, dex_chain_id: e.target.value }))}
+            />
+            <input
+              placeholder="dex_token_address"
+              value={newToken.dex_token_address}
+              onChange={(e) =>
+                setNewToken((p) => ({ ...p, dex_token_address: e.target.value }))
+              }
+            />
+            <input
+              placeholder="dex_quote_token_address"
+              value={newToken.dex_quote_token_address}
+              onChange={(e) =>
+                setNewToken((p) => ({ ...p, dex_quote_token_address: e.target.value }))
+              }
+            />
+            <input
+              placeholder="dex_quote_token_decimals"
+              value={newToken.dex_quote_token_decimals}
+              onChange={(e) =>
+                setNewToken((p) => ({
+                  ...p,
+                  dex_quote_token_decimals: e.target.value,
+                }))
+              }
+            />
+            <input
+              placeholder="dex_slippage (0-1)"
+              value={newToken.dex_slippage}
+              onChange={(e) => setNewToken((p) => ({ ...p, dex_slippage: e.target.value }))}
             />
             <button onClick={addToken}>Add Token</button>
           </div>

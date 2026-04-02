@@ -59,12 +59,24 @@ class ControlStore:
                 """
                 CREATE TABLE IF NOT EXISTS settings (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
+                    market_type TEXT NOT NULL DEFAULT 'CEX',
                     trade_amount_usd REAL NOT NULL,
                     max_active_trades INTEGER NOT NULL,
                     poll_interval_seconds INTEGER NOT NULL,
                     request_timeout_seconds REAL NOT NULL,
                     max_retries INTEGER NOT NULL,
                     retry_backoff_seconds REAL NOT NULL,
+                    dex_base_url TEXT NOT NULL DEFAULT 'https://web3.okx.com',
+                    dex_project_id TEXT,
+                    dex_chain_id TEXT,
+                    dex_quote_token_address TEXT,
+                    dex_quote_token_decimals INTEGER NOT NULL DEFAULT 6,
+                    dex_slippage REAL NOT NULL DEFAULT 0.005,
+                    dex_wallet_address TEXT,
+                    dex_private_key TEXT,
+                    dex_rpc_url TEXT,
+                    dex_live_execute INTEGER NOT NULL DEFAULT 0,
+                    dex_price_probe_quote_amount REAL NOT NULL DEFAULT 1.0,
                     telegram_enabled INTEGER NOT NULL,
                     telegram_bot_token TEXT,
                     telegram_chat_id TEXT,
@@ -84,12 +96,18 @@ class ControlStore:
                 CREATE TABLE IF NOT EXISTS tokens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     symbol TEXT NOT NULL UNIQUE,
+                    market_type TEXT,
                     buy_drop_pct REAL,
                     buy_drop_reference_price REAL,
                     buy_price REAL,
                     sell_profit_pct REAL,
                     sell_price REAL,
                     stop_loss_pct REAL,
+                    dex_chain_id TEXT,
+                    dex_token_address TEXT,
+                    dex_quote_token_address TEXT,
+                    dex_quote_token_decimals INTEGER,
+                    dex_slippage REAL,
                     is_active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -139,16 +157,61 @@ class ControlStore:
             )
 
             now = utc_now_iso()
+            # Backward-compatible schema migrations for existing DBs.
+            setting_columns = {row["name"] for row in conn.execute("PRAGMA table_info(settings)").fetchall()}
+            token_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tokens)").fetchall()}
+            if "market_type" not in setting_columns:
+                conn.execute("ALTER TABLE settings ADD COLUMN market_type TEXT NOT NULL DEFAULT 'CEX'")
+            if "dex_base_url" not in setting_columns:
+                conn.execute(
+                    "ALTER TABLE settings ADD COLUMN dex_base_url TEXT NOT NULL DEFAULT 'https://web3.okx.com'"
+                )
+            if "dex_project_id" not in setting_columns:
+                conn.execute("ALTER TABLE settings ADD COLUMN dex_project_id TEXT")
+            if "dex_chain_id" not in setting_columns:
+                conn.execute("ALTER TABLE settings ADD COLUMN dex_chain_id TEXT")
+            if "dex_quote_token_address" not in setting_columns:
+                conn.execute("ALTER TABLE settings ADD COLUMN dex_quote_token_address TEXT")
+            if "dex_quote_token_decimals" not in setting_columns:
+                conn.execute(
+                    "ALTER TABLE settings ADD COLUMN dex_quote_token_decimals INTEGER NOT NULL DEFAULT 6"
+                )
+            if "dex_slippage" not in setting_columns:
+                conn.execute("ALTER TABLE settings ADD COLUMN dex_slippage REAL NOT NULL DEFAULT 0.005")
+            if "dex_wallet_address" not in setting_columns:
+                conn.execute("ALTER TABLE settings ADD COLUMN dex_wallet_address TEXT")
+            if "dex_private_key" not in setting_columns:
+                conn.execute("ALTER TABLE settings ADD COLUMN dex_private_key TEXT")
+            if "dex_rpc_url" not in setting_columns:
+                conn.execute("ALTER TABLE settings ADD COLUMN dex_rpc_url TEXT")
+            if "dex_live_execute" not in setting_columns:
+                conn.execute("ALTER TABLE settings ADD COLUMN dex_live_execute INTEGER NOT NULL DEFAULT 0")
+            if "dex_price_probe_quote_amount" not in setting_columns:
+                conn.execute(
+                    "ALTER TABLE settings ADD COLUMN dex_price_probe_quote_amount REAL NOT NULL DEFAULT 1.0"
+                )
             conn.execute(
                 """
                 INSERT OR IGNORE INTO settings (
                     id,
+                    market_type,
                     trade_amount_usd,
                     max_active_trades,
                     poll_interval_seconds,
                     request_timeout_seconds,
                     max_retries,
                     retry_backoff_seconds,
+                    dex_base_url,
+                    dex_project_id,
+                    dex_chain_id,
+                    dex_quote_token_address,
+                    dex_quote_token_decimals,
+                    dex_slippage,
+                    dex_wallet_address,
+                    dex_private_key,
+                    dex_rpc_url,
+                    dex_live_execute,
+                    dex_price_probe_quote_amount,
                     telegram_enabled,
                     telegram_bot_token,
                     telegram_chat_id,
@@ -163,12 +226,24 @@ class ControlStore:
                 )
                 VALUES (
                     1,
+                    'CEX',
                     100.0,
                     6,
                     10,
                     10.0,
                     3,
                     1.5,
+                    'https://web3.okx.com',
+                    NULL,
+                    NULL,
+                    NULL,
+                    6,
+                    0.005,
+                    NULL,
+                    NULL,
+                    NULL,
+                    0,
+                    1.0,
                     0,
                     NULL,
                     NULL,
@@ -183,6 +258,40 @@ class ControlStore:
                 )
                 """,
                 (now, now),
+            )
+            conn.execute(
+                """
+                UPDATE settings SET
+                    market_type = COALESCE(market_type, 'CEX'),
+                    dex_base_url = COALESCE(dex_base_url, 'https://web3.okx.com'),
+                    dex_quote_token_decimals = COALESCE(dex_quote_token_decimals, 6),
+                    dex_slippage = COALESCE(dex_slippage, 0.005),
+                    dex_live_execute = COALESCE(dex_live_execute, 0),
+                    dex_price_probe_quote_amount = COALESCE(dex_price_probe_quote_amount, 1.0)
+                WHERE id = 1
+                """
+            )
+
+            if "market_type" not in token_columns:
+                conn.execute("ALTER TABLE tokens ADD COLUMN market_type TEXT")
+            if "dex_chain_id" not in token_columns:
+                conn.execute("ALTER TABLE tokens ADD COLUMN dex_chain_id TEXT")
+            if "dex_token_address" not in token_columns:
+                conn.execute("ALTER TABLE tokens ADD COLUMN dex_token_address TEXT")
+            if "dex_quote_token_address" not in token_columns:
+                conn.execute("ALTER TABLE tokens ADD COLUMN dex_quote_token_address TEXT")
+            if "dex_quote_token_decimals" not in token_columns:
+                conn.execute("ALTER TABLE tokens ADD COLUMN dex_quote_token_decimals INTEGER")
+            if "dex_slippage" not in token_columns:
+                conn.execute("ALTER TABLE tokens ADD COLUMN dex_slippage REAL")
+            conn.execute(
+                """
+                UPDATE tokens SET
+                    market_type = COALESCE(UPPER(TRIM(market_type)), 'CEX'),
+                    dex_chain_id = NULLIF(TRIM(dex_chain_id), ''),
+                    dex_token_address = NULLIF(TRIM(dex_token_address), ''),
+                    dex_quote_token_address = NULLIF(TRIM(dex_quote_token_address), '')
+                """
             )
             conn.execute(
                 """
@@ -205,19 +314,30 @@ class ControlStore:
                     conn.execute(
                         """
                         INSERT OR IGNORE INTO tokens (
-                            symbol, buy_drop_pct, buy_drop_reference_price, buy_price,
-                            sell_profit_pct, sell_price, stop_loss_pct, is_active, created_at, updated_at
+                            symbol, market_type, buy_drop_pct, buy_drop_reference_price, buy_price,
+                            sell_profit_pct, sell_price, stop_loss_pct,
+                            dex_chain_id, dex_token_address, dex_quote_token_address,
+                            dex_quote_token_decimals, dex_slippage,
+                            is_active, created_at, updated_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                         """,
                         (
                             symbol,
+                            str(token.get("market_type") or "").strip().upper()
+                            if token.get("market_type") is not None
+                            else None,
                             token.get("buy_drop_pct"),
                             token.get("buy_drop_reference_price"),
                             token.get("buy_price"),
                             token.get("sell_profit_pct"),
                             token.get("sell_price"),
                             token.get("stop_loss_pct"),
+                            token.get("dex_chain_id"),
+                            token.get("dex_token_address"),
+                            token.get("dex_quote_token_address"),
+                            token.get("dex_quote_token_decimals"),
+                            token.get("dex_slippage"),
                             now,
                             now,
                         ),
@@ -229,20 +349,75 @@ class ControlStore:
             return {}
         return {k: row[k] for k in row.keys()}
 
+    def _redact_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        redacted = dict(settings)
+        if "dex_private_key" in redacted:
+            redacted["dex_private_key"] = None
+        return redacted
+
     def get_settings(self) -> dict[str, Any]:
         with self._lock, self._connect() as conn:
             row = conn.execute("SELECT * FROM settings WHERE id = 1").fetchone()
             settings = self._row_to_dict(row)
-        return settings
+        return self._redact_settings(settings)
+
+    def _ensure_setting_columns(self) -> None:
+        expected_columns = {
+            "market_type": "TEXT NOT NULL DEFAULT 'CEX'",
+            "dex_base_url": "TEXT NOT NULL DEFAULT 'https://web3.okx.com'",
+            "dex_project_id": "TEXT",
+            "dex_chain_id": "TEXT",
+            "dex_quote_token_address": "TEXT",
+            "dex_quote_token_decimals": "INTEGER NOT NULL DEFAULT 6",
+            "dex_slippage": "REAL NOT NULL DEFAULT 0.005",
+            "dex_wallet_address": "TEXT",
+            "dex_private_key": "TEXT",
+            "dex_rpc_url": "TEXT",
+            "dex_live_execute": "INTEGER NOT NULL DEFAULT 0",
+            "dex_price_probe_quote_amount": "REAL NOT NULL DEFAULT 1.0",
+        }
+        with self._lock, self._connect() as conn:
+            rows = conn.execute("PRAGMA table_info(settings)").fetchall()
+            existing = {str(row["name"]) for row in rows}
+            for column, data_type in expected_columns.items():
+                if column in existing:
+                    continue
+                conn.execute(f"ALTER TABLE settings ADD COLUMN {column} {data_type}")
+            conn.execute(
+                """
+                UPDATE settings SET
+                    market_type = COALESCE(market_type, 'CEX'),
+                    dex_base_url = COALESCE(dex_base_url, 'https://web3.okx.com'),
+                    dex_quote_token_decimals = COALESCE(dex_quote_token_decimals, 6),
+                    dex_slippage = COALESCE(dex_slippage, 0.005),
+                    dex_live_execute = COALESCE(dex_live_execute, 0),
+                    dex_price_probe_quote_amount = COALESCE(dex_price_probe_quote_amount, 1.0)
+                WHERE id = 1
+                """
+            )
+            conn.commit()
 
     def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_setting_columns()
         allowed_fields = {
+            "market_type",
             "trade_amount_usd",
             "max_active_trades",
             "poll_interval_seconds",
             "request_timeout_seconds",
             "max_retries",
             "retry_backoff_seconds",
+            "dex_base_url",
+            "dex_project_id",
+            "dex_chain_id",
+            "dex_quote_token_address",
+            "dex_quote_token_decimals",
+            "dex_slippage",
+            "dex_wallet_address",
+            "dex_private_key",
+            "dex_rpc_url",
+            "dex_live_execute",
+            "dex_price_probe_quote_amount",
             "telegram_enabled",
             "telegram_bot_token",
             "telegram_chat_id",
@@ -267,6 +442,24 @@ class ControlStore:
             conn.commit()
         return self.get_settings()
 
+    def _ensure_token_columns(self) -> None:
+        expected_columns = {
+            "market_type": "TEXT",
+            "dex_chain_id": "TEXT",
+            "dex_token_address": "TEXT",
+            "dex_quote_token_address": "TEXT",
+            "dex_quote_token_decimals": "INTEGER",
+            "dex_slippage": "REAL",
+        }
+        with self._lock, self._connect() as conn:
+            rows = conn.execute("PRAGMA table_info(tokens)").fetchall()
+            existing = {str(row["name"]) for row in rows}
+            for column, data_type in expected_columns.items():
+                if column in existing:
+                    continue
+                conn.execute(f"ALTER TABLE tokens ADD COLUMN {column} {data_type}")
+            conn.commit()
+
     def list_tokens(self) -> list[dict[str, Any]]:
         with self._lock, self._connect() as conn:
             rows = conn.execute(
@@ -283,19 +476,28 @@ class ControlStore:
             cursor = conn.execute(
                 """
                 INSERT INTO tokens (
-                    symbol, buy_drop_pct, buy_drop_reference_price, buy_price,
-                    sell_profit_pct, sell_price, stop_loss_pct, is_active, created_at, updated_at
+                    symbol, market_type, buy_drop_pct, buy_drop_reference_price, buy_price,
+                    sell_profit_pct, sell_price, stop_loss_pct,
+                    dex_chain_id, dex_token_address, dex_quote_token_address,
+                    dex_quote_token_decimals, dex_slippage,
+                    is_active, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     symbol,
+                    payload.get("market_type"),
                     payload.get("buy_drop_pct"),
                     payload.get("buy_drop_reference_price"),
                     payload.get("buy_price"),
                     payload.get("sell_profit_pct"),
                     payload.get("sell_price"),
                     payload.get("stop_loss_pct"),
+                    payload.get("dex_chain_id"),
+                    payload.get("dex_token_address"),
+                    payload.get("dex_quote_token_address"),
+                    payload.get("dex_quote_token_decimals"),
+                    payload.get("dex_slippage"),
                     int(bool(payload.get("is_active", True))),
                     now,
                     now,
@@ -313,12 +515,18 @@ class ControlStore:
     def update_token(self, token_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         allowed = {
             "symbol",
+            "market_type",
             "buy_drop_pct",
             "buy_drop_reference_price",
             "buy_price",
             "sell_profit_pct",
             "sell_price",
             "stop_loss_pct",
+            "dex_chain_id",
+            "dex_token_address",
+            "dex_quote_token_address",
+            "dex_quote_token_decimals",
+            "dex_slippage",
             "is_active",
         }
         updates = {k: payload[k] for k in payload if k in allowed}
@@ -328,6 +536,17 @@ class ControlStore:
             updates["symbol"] = str(updates["symbol"]).strip().upper()
             if not updates["symbol"]:
                 raise ValueError("symbol must be non-empty")
+        if "market_type" in updates and updates["market_type"] is not None:
+            updates["market_type"] = str(updates["market_type"]).strip().upper()
+        for key in ("dex_chain_id", "dex_token_address", "dex_quote_token_address"):
+            if key in updates and updates[key] is not None:
+                updates[key] = str(updates[key]).strip()
+        if "dex_quote_token_decimals" in updates:
+            raw = updates["dex_quote_token_decimals"]
+            updates["dex_quote_token_decimals"] = None if raw is None else int(raw)
+        if "dex_slippage" in updates:
+            raw = updates["dex_slippage"]
+            updates["dex_slippage"] = None if raw is None else float(raw)
         if "is_active" in updates:
             updates["is_active"] = int(_to_bool(updates["is_active"]))
         updates["updated_at"] = utc_now_iso()
@@ -426,6 +645,19 @@ class ControlStore:
         settings = self.get_settings()
         tokens = self.list_tokens()
         active_tokens = [token for token in tokens if int(token.get("is_active", 1)) == 1]
+        market_type = str(settings.get("market_type", "CEX")).upper()
+        if market_type == "DEX":
+            active_tokens = [
+                token
+                for token in active_tokens
+                if str(token.get("market_type") or "DEX").upper() == "DEX"
+            ]
+        else:
+            active_tokens = [
+                token
+                for token in active_tokens
+                if str(token.get("market_type") or "CEX").upper() == "CEX"
+            ]
         return {
             "settings": settings,
             "tokens": active_tokens,
@@ -457,11 +689,26 @@ def _to_int(value: Any) -> int:
 
 def _normalize_settings_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
+    if "market_type" in normalized and normalized["market_type"] is not None:
+        normalized["market_type"] = str(normalized["market_type"]).strip().upper()
+    for key in (
+        "dex_base_url",
+        "dex_project_id",
+        "dex_chain_id",
+        "dex_quote_token_address",
+        "dex_wallet_address",
+        "dex_private_key",
+        "dex_rpc_url",
+    ):
+        if key in normalized and normalized[key] is not None:
+            normalized[key] = str(normalized[key]).strip()
+
     bool_fields = {
         "telegram_enabled",
         "telegram_notify_positions",
         "dry_run",
         "okx_simulated",
+        "dex_live_execute",
     }
     float_fields = {
         "trade_amount_usd",
@@ -469,12 +716,15 @@ def _normalize_settings_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "retry_backoff_seconds",
         "telegram_timeout_seconds",
         "telegram_retry_backoff_seconds",
+        "dex_slippage",
+        "dex_price_probe_quote_amount",
     }
     int_fields = {
         "max_active_trades",
         "poll_interval_seconds",
         "max_retries",
         "telegram_max_retries",
+        "dex_quote_token_decimals",
     }
 
     for key in bool_fields:
@@ -493,6 +743,11 @@ def _normalize_token_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
     if "symbol" in normalized and normalized["symbol"] is not None:
         normalized["symbol"] = str(normalized["symbol"]).strip().upper()
+    if "market_type" in normalized and normalized["market_type"] is not None:
+        normalized["market_type"] = str(normalized["market_type"]).strip().upper()
+    for key in ("dex_chain_id", "dex_token_address", "dex_quote_token_address"):
+        if key in normalized and normalized[key] is not None:
+            normalized[key] = str(normalized[key]).strip()
 
     float_fields = {
         "buy_drop_pct",
@@ -501,10 +756,15 @@ def _normalize_token_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "sell_profit_pct",
         "sell_price",
         "stop_loss_pct",
+        "dex_slippage",
     }
     for key in float_fields:
         if key in normalized:
             normalized[key] = _to_float_or_none(normalized[key])
+
+    if "dex_quote_token_decimals" in normalized:
+        raw = normalized["dex_quote_token_decimals"]
+        normalized["dex_quote_token_decimals"] = None if raw is None else _to_int(raw)
 
     if "is_active" in normalized:
         normalized["is_active"] = int(_to_bool(normalized["is_active"]))
@@ -597,34 +857,7 @@ def create_control_api(
     @app.put("/api/settings")
     def put_settings() -> Any:
         payload = request.get_json(silent=True) or {}
-        normalized = dict(payload)
-        float_fields = {
-            "trade_amount_usd",
-            "request_timeout_seconds",
-            "retry_backoff_seconds",
-            "telegram_timeout_seconds",
-            "telegram_retry_backoff_seconds",
-        }
-        int_fields = {
-            "max_active_trades",
-            "poll_interval_seconds",
-            "max_retries",
-            "telegram_max_retries",
-        }
-        for key in float_fields:
-            if key in normalized:
-                normalized[key] = _to_float_or_none(normalized[key])
-        for key in int_fields:
-            if key in normalized:
-                normalized[key] = _to_int(normalized[key])
-        for key in (
-            "telegram_enabled",
-            "telegram_notify_positions",
-            "dry_run",
-            "okx_simulated",
-        ):
-            if key in normalized:
-                normalized[key] = int(_to_bool(normalized[key]))
+        normalized = _normalize_settings_payload(payload)
         updated = store.update_settings(normalized)
         publish_ws_event("settings_updated", updated)
         return jsonify(updated)

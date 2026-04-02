@@ -195,6 +195,12 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# Local app env files
+.env
+frontend/.env
+frontend/node_modules/
+frontend/dist/
+
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
@@ -204,6 +210,8 @@ cython_debug/
 
 # Bot runtime state
 positions.db
+backend.db
+data/
 
 # Marimo
 marimo/_static/

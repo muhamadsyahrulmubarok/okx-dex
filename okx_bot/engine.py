@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from okx_bot.client import OkxClient
 from okx_bot.config import BotConfig, TokenRule
@@ -14,6 +14,9 @@ from okx_bot.storage import PositionStore
 from okx_bot.telegram import Notifier, NullNotifier
 
 logger = logging.getLogger(__name__)
+
+TradeEventCallback = Callable[[dict[str, Any]], None]
+ErrorEventCallback = Callable[[dict[str, Any]], None]
 
 
 @dataclass
@@ -129,18 +132,46 @@ class BotRunner:
         *,
         dry_run: bool = False,
         notifier: Notifier | None = None,
+        on_trade_event: TradeEventCallback | None = None,
+        on_error_event: ErrorEventCallback | None = None,
     ) -> None:
+        self.position_manager = PositionManager(store)
+        self.reference_prices: dict[str, float] = {}
+        self.signal_engine = SignalEngine()
         self.config = config
         self.client = client
-        self.position_manager = PositionManager(store)
-        self.signal_engine = SignalEngine()
         self.trade_executor = TradeExecutor(client, dry_run=dry_run)
         self.risk_controller = RiskController(
             max_active_trades=config.max_active_trades,
             trade_amount_usd=config.trade_amount_usd,
         )
-        self.reference_prices: dict[str, float] = {}
         self.notifier = notifier or NullNotifier()
+        self.on_trade_event = on_trade_event
+        self.on_error_event = on_error_event
+
+    def update_runtime(
+        self,
+        *,
+        config: BotConfig,
+        client: OkxClient,
+        dry_run: bool,
+        notifier: Notifier | None,
+    ) -> None:
+        self.config = config
+        self.client = client
+        self.trade_executor = TradeExecutor(client, dry_run=dry_run)
+        self.risk_controller = RiskController(
+            max_active_trades=config.max_active_trades,
+            trade_amount_usd=config.trade_amount_usd,
+        )
+        self.notifier = notifier or NullNotifier()
+        self._prune_reference_prices()
+
+    def _prune_reference_prices(self) -> None:
+        valid_symbols = {token.symbol for token in self.config.tokens}
+        for symbol in list(self.reference_prices):
+            if symbol not in valid_symbols:
+                self.reference_prices.pop(symbol, None)
 
     def _notify(self, message: str) -> None:
         if not self.notifier.enabled:
@@ -149,6 +180,22 @@ class BotRunner:
             self.notifier.send(message)
         except Exception:
             logger.exception("Failed to send Telegram notification")
+
+    def _emit_trade_event(self, event: dict[str, Any]) -> None:
+        if self.on_trade_event is None:
+            return
+        try:
+            self.on_trade_event(event)
+        except Exception:
+            logger.exception("Failed to emit trade event")
+
+    def _emit_error_event(self, event: dict[str, Any]) -> None:
+        if self.on_error_event is None:
+            return
+        try:
+            self.on_error_event(event)
+        except Exception:
+            logger.exception("Failed to emit error event")
 
     def _load_price(self, symbol: str) -> float:
         return self.client.get_last_price(symbol)
@@ -215,6 +262,18 @@ class BotRunner:
                                 f"Mode: {'DRY-RUN' if self.trade_executor.dry_run else 'LIVE'}"
                             )
                         )
+                        self._emit_trade_event(
+                            {
+                                "symbol": symbol,
+                                "action": "BUY",
+                                "price": current_price,
+                                "quantity": qty,
+                                "notional_usd": trade_size_usd,
+                                "reason": reason,
+                                "mode": "DRY-RUN" if self.trade_executor.dry_run else "LIVE",
+                                "raw_order": order_result,
+                            }
+                        )
                         logger.debug("Order response: %s", order_result)
                         self.reference_prices[symbol] = current_price
                 else:
@@ -242,10 +301,30 @@ class BotRunner:
                                 f"Mode: {'DRY-RUN' if self.trade_executor.dry_run else 'LIVE'}"
                             )
                         )
+                        self._emit_trade_event(
+                            {
+                                "symbol": symbol,
+                                "action": "SELL",
+                                "price": current_price,
+                                "quantity": position.quantity,
+                                "notional_usd": current_price * position.quantity,
+                                "pnl_pct": position.pnl_pct(current_price),
+                                "reason": reason,
+                                "mode": "DRY-RUN" if self.trade_executor.dry_run else "LIVE",
+                                "raw_order": order_result,
+                            }
+                        )
                         logger.debug("Order response: %s", order_result)
                         self.reference_prices[symbol] = current_price
             except Exception:
                 logger.exception("Error processing symbol %s", symbol)
+                self._emit_error_event(
+                    {
+                        "symbol": symbol,
+                        "message": "Error while processing symbol",
+                        "mode": "DRY-RUN" if self.trade_executor.dry_run else "LIVE",
+                    }
+                )
                 self._notify(
                     f"ERROR processing {symbol}\nCheck bot logs for details.\nMode: {'DRY-RUN' if self.trade_executor.dry_run else 'LIVE'}"
                 )

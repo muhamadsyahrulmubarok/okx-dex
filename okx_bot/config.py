@@ -56,14 +56,7 @@ def _parse_token(raw: dict[str, Any]) -> TokenRule:
     )
 
 
-def load_config(path: str | Path) -> BotConfig:
-    config_path = Path(path)
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as f:
-        raw = json.load(f)
-
+def _parse_config_dict(raw: dict[str, Any]) -> BotConfig:
     tokens_raw = raw.get("tokens")
     if not isinstance(tokens_raw, list) or not tokens_raw:
         raise ValueError("'tokens' must be a non-empty list")
@@ -103,3 +96,17 @@ def load_config(path: str | Path) -> BotConfig:
         retry_backoff_seconds=retry_backoff_seconds,
         tokens=tokens,
     )
+
+
+def load_config_dict(raw: dict[str, Any]) -> BotConfig:
+    return _parse_config_dict(raw)
+
+
+def load_config(path: str | Path) -> BotConfig:
+    config_path = Path(path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+    return _parse_config_dict(raw)

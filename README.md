@@ -1,152 +1,189 @@
-# OKX Rule-Based Trading Bot (Starter)
+# OKX Bot Platform (UI -> Backend API -> Python Worker)
 
-Command-style Python starter bot for OKX API v5 spot trading with:
+This repository now includes an MVP for the architecture you requested:
 
-- Buy when price drops by threshold (e.g. `-25%`) **or** reaches a fixed buy price
-- Sell at profit threshold (e.g. `+25%`) **or** fixed sell price
-- Optional stop-loss per token (e.g. `-10%`)
-- Fixed trade size in USD (e.g. `$100`)
-- Max concurrent active positions (e.g. `6`)
-- SQLite persistence for open positions (survives restart)
+- **Frontend UI (React + Vite)** for bot control and settings
+- **Backend API (Python/Flask)** exposing bot/settings/tokens/telegram/logs/trades endpoints
+- **Python Worker** reading runtime config from backend on each cycle
+- **OKX API v5 integration** for market data + orders
+- **SQLite persistence** for settings/tokens/trades/logs and open positions
+- **Telegram integration** configurable via UI/API
+- **WebSocket events** for real-time UI updates
 
-## Important scope note
-
-This starter uses **OKX CEX API v5** (API key + secret + passphrase).  
-If you need **OKX DEX / wallet-based Web3 routing**, that is a different integration path and requires wallet signing + Web3 SDK flow.
+> Scope note: trading integration is OKX **CEX API v5** (API key based).  
+> OKX DEX / wallet-based flow is different and not included in this MVP.
 
 ---
 
-## 1) Install
+## Implemented architecture
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r requirements.txt
+```text
+[ React UI ] <----HTTP/WS----> [ Backend API ]
+                                   |
+                                   +---- controls worker process
+                                   |
+                                   +---- [ SQLite ]
+                                   |
+[ Python Worker ] ----HTTP------> [ Backend API runtime config ]
+       |
+       +----> [ OKX API ]
+       +----> [ Telegram Bot API ]
 ```
 
-## 2) Configure
+Also included in `docker-compose.yml`:
 
-Create config and env files from examples:
+- `frontend`
+- `backend`
+- `worker`
+- `redis` (ready for future status-flag/event use)
+- `postgres` (ready for future migration from SQLite)
+
+---
+
+## API endpoints
+
+### Bot control
+
+- `POST /api/bot/start`
+- `POST /api/bot/stop`
+- `POST /api/bot/restart`
+- `GET /api/bot/status`
+
+### Settings
+
+- `GET /api/settings`
+- `PUT /api/settings`
+
+### Tokens
+
+- `GET /api/tokens`
+- `POST /api/tokens`
+- `PUT /api/tokens/:id`
+- `DELETE /api/tokens/:id`
+
+### Telegram
+
+- `POST /api/telegram/test`
+
+### Logs / trades / runtime
+
+- `GET /api/logs`
+- `GET /api/trades`
+- `GET /api/runtime/config`
+- `GET /api/ui/overview`
+
+### Worker event ingestion
+
+- `POST /api/events/trade`
+- `POST /api/events/error`
+- `POST /api/events/heartbeat`
+
+### Real-time
+
+- `WS /ws/events`
+- `POST /api/ws/publish` (manual custom event publish)
+
+---
+
+## UI pages included (MVP)
+
+Frontend path: `frontend/`
+
+- **Bot Control Panel**
+  - Start / Stop / Restart
+  - Status + PID + last run + active trade count
+- **Strategy Settings**
+  - Trade amount, max active trades, poll interval, dry-run, etc.
+- **Token Management**
+  - list/add/delete tokens (replaces config.json at runtime)
+- **Telegram Settings**
+  - token/chat id + test notification
+- **Logs & Trades**
+  - latest data pulled from API
+- **Chart panel placeholder**
+  - section prepared for TradingView integration
+
+---
+
+## Quick start (Docker)
+
+1) Copy env files:
 
 ```bash
-cp config.example.json config.json
 cp .env.example .env
+cp frontend/.env.example frontend/.env
 ```
 
-Fill `.env`:
+2) Fill `.env` with your OKX credentials and optional Telegram credentials.
 
-```dotenv
-OKX_API_KEY=your_key
-OKX_SECRET_KEY=your_secret
-OKX_PASSPHRASE=your_passphrase
-BASE_URL=https://www.okx.com
-OKX_SIMULATED=false
-
-# Telegram notifications (optional)
-TELEGRAM_ENABLED=false
-TELEGRAM_BOT_TOKEN=123456789:your_bot_token
-TELEGRAM_CHAT_ID=123456789
-TELEGRAM_NOTIFY_POSITIONS=false
-```
-
-Edit `config.json` with your token rules.
-
-Example:
-
-```json
-{
-  "max_active_trades": 6,
-  "trade_amount_usd": 100,
-  "poll_interval_seconds": 10,
-  "request_timeout_seconds": 10,
-  "max_retries": 3,
-  "retry_backoff_seconds": 1.5,
-  "tokens": [
-    {
-      "symbol": "ETH-USDT",
-      "buy_drop_pct": -25,
-      "buy_drop_reference_price": null,
-      "buy_price": null,
-      "sell_profit_pct": 25,
-      "sell_price": null,
-      "stop_loss_pct": -10
-    },
-    {
-      "symbol": "ARB-USDT",
-      "buy_drop_pct": null,
-      "buy_drop_reference_price": null,
-      "buy_price": 1.2,
-      "sell_profit_pct": null,
-      "sell_price": 1.6,
-      "stop_loss_pct": -10
-    }
-  ]
-}
-```
-
-### `buy_drop_reference_price` behavior
-
-- If set (number), drop % is measured against that fixed reference.
-- If `null`, the bot uses an in-memory reference initialized from first seen price for that symbol and refreshed after each completed trade cycle.
-
----
-
-## 3) Run
-
-Single cycle (safe smoke test):
+3) Start all services:
 
 ```bash
-python3 bot.py --config config.json --db positions.db --once --dry-run
+docker compose up --build
 ```
 
-Continuous run:
+4) Open:
+
+- UI: `http://localhost:5173`
+- Backend API: `http://localhost:8080/api/health`
+
+5) In UI, click **Start** bot.
+
+---
+
+## Local run without Docker
+
+### Backend API
 
 ```bash
-python3 bot.py --config config.json --db positions.db
+python3 -m pip install -r requirements.txt
+python3 backend_api.py
 ```
 
-Useful options:
+### Worker (separate terminal)
 
-- `--dry-run` : evaluate signals without placing orders
-- `--once` : run one loop and exit
-- `--log-level DEBUG` : verbose logs
+```bash
+python3 okx_worker.py
+```
 
-### Telegram integration
+### Frontend
 
-When `TELEGRAM_ENABLED=true`, the bot sends notifications to your chat:
-
-- startup/shutdown
-- BUY and SELL events (with reason, qty, price, mode)
-- symbol processing errors
-- optional per-cycle positions snapshot (`TELEGRAM_NOTIFY_POSITIONS=true`)
-
-How to get your values:
-
-1. Create a bot with `@BotFather` and copy the bot token.
-2. Start a chat with your bot (or add bot to group).
-3. Get `chat_id`:
-   - Open `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
-   - Send a test message to the bot first
-   - Read `message.chat.id` from the response JSON
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 ---
 
-## Bot architecture
+## Runtime behavior
 
-- `okx_bot/config.py` - load and validate JSON config
-- `okx_bot/client.py` - OKX v5 request signing + HTTP retries
-- `okx_bot/engine.py` - signal engine + trade executor + bot loop cycle
-- `okx_bot/risk.py` - fixed size + max concurrent trade constraints
-- `okx_bot/storage.py` - SQLite persistence for open positions
-- `okx_bot/telegram.py` - Telegram Bot API notifications
-- `bot.py` - CLI entrypoint
+- Worker fetches runtime config from backend (`/api/runtime/config`) every cycle.
+- Changing settings/tokens from UI/API is reflected without editing Python source.
+- Backend start/stop controls worker process.
+- Trade and error events are persisted and emitted to websocket subscribers.
 
 ---
 
-## Safety checklist before live trading
+## Key files
 
-- Start with `OKX_SIMULATED=true`
-- Keep `--dry-run` enabled until logs match expected triggers
-- Validate instrument rules (tick size, min order size) for each symbol
-- Add monitoring/alerts for order failures and stuck positions
-- Consider websocket market data for lower latency vs polling
+- `backend_api.py` - backend process manager + API server bootstrap
+- `okx_worker.py` - worker loop controlled by backend state
+- `okx_bot/control_api.py` - API routes + SQLite control store + websocket
+- `okx_bot/engine.py` - signal/risk/execution engine with event hooks
+- `okx_bot/client.py` - OKX request signing + retry logic
+- `okx_bot/telegram.py` - Telegram notifications
+- `frontend/src/App.tsx` - MVP control UI
+- `docker-compose.yml` - full local stack
+
+---
+
+## Safety reminders
+
+- Keep `dry_run=1` in settings until strategy behavior is validated.
+- Use `okx_simulated=1` for simulated trading mode.
+- Validate per-symbol lot size/tick size constraints before live deployment.
+
+## Legacy CLI
+
+The original standalone runner (`bot.py` with `config.json`) is still present for quick local testing.

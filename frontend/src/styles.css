@@ -1,0 +1,102 @@
+.page {
+  font-family: Arial, sans-serif;
+  margin: 0 auto;
+  max-width: 1400px;
+  padding: 1rem;
+  color: #111;
+}
+
+h1,
+h2 {
+  margin: 0 0 0.75rem;
+}
+
+.row {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: stretch;
+}
+
+.card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #fff;
+  flex: 1;
+  min-width: 0;
+}
+
+.error {
+  background: #fee;
+  border: 1px solid #f99;
+  color: #900;
+  padding: 0.5rem;
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem;
+  margin-top: 0.2rem;
+}
+
+button {
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+th,
+td {
+  border: 1px solid #ddd;
+  padding: 0.35rem;
+}
+
+thead {
+  background: #f5f5f5;
+}
+
+.inline-form {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(90px, 1fr));
+  gap: 0.4rem;
+  margin-top: 0.8rem;
+}
+
+pre {
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 0.7rem;
+  max-height: 320px;
+  overflow: auto;
+}
+
+@media (max-width: 1100px) {
+  .row {
+    flex-direction: column;
+  }
+
+  .inline-form {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,74 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: okx-backend
+    env_file:
+      - .env
+    environment:
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 8080
+      WORKER_SCRIPT: okx_worker.py
+      PYTHON_BIN: python3
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    command: ["python3", "backend_api.py"]
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: okx-worker
+    env_file:
+      - .env
+    environment:
+      CONTROL_API_BASE_URL: http://backend:8080
+    depends_on:
+      - backend
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    command: ["python3", "okx_worker.py"]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: okx-frontend
+    environment:
+      VITE_API_BASE: http://localhost:8080
+      VITE_WS_BASE: ws://localhost:8080/ws/events
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: okx-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: okx-postgres
+    environment:
+      POSTGRES_USER: okx
+      POSTGRES_PASSWORD: okx
+      POSTGRES_DB: okx_bot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:

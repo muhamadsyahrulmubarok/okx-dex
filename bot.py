@@ -13,6 +13,7 @@ from okx_bot.client import OkxClient, OkxCredentials
 from okx_bot.config import load_config
 from okx_bot.engine import BotRunner
 from okx_bot.storage import PositionStore
+from okx_bot.telegram import build_notifier
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,6 +52,26 @@ def _bool_env(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
 
 
 def load_credentials(*, require_auth: bool) -> OkxCredentials:
@@ -93,6 +114,15 @@ def main() -> None:
     load_dotenv()
     config = load_config(args.config)
     credentials = load_credentials(require_auth=not args.dry_run)
+    telegram_enabled = _bool_env("TELEGRAM_ENABLED", default=False)
+    notifier = build_notifier(
+        enabled=telegram_enabled,
+        bot_token=os.getenv("TELEGRAM_BOT_TOKEN"),
+        chat_id=os.getenv("TELEGRAM_CHAT_ID"),
+        timeout_seconds=_float_env("TELEGRAM_TIMEOUT_SECONDS", 10.0),
+        max_retries=_int_env("TELEGRAM_MAX_RETRIES", 3),
+        retry_backoff_seconds=_float_env("TELEGRAM_RETRY_BACKOFF_SECONDS", 1.5),
+    )
     store = PositionStore(args.db)
     client = OkxClient(
         credentials,
@@ -100,7 +130,15 @@ def main() -> None:
         max_retries=config.max_retries,
         retry_backoff_seconds=config.retry_backoff_seconds,
     )
-    runner = BotRunner(config, client, store, dry_run=args.dry_run)
+    runner = BotRunner(config, client, store, dry_run=args.dry_run, notifier=notifier)
+
+    def safe_notify(message: str) -> None:
+        if not notifier.enabled:
+            return
+        try:
+            notifier.send(message)
+        except Exception:
+            logger.exception("Failed to send Telegram notification")
 
     logger.info(
         "Starting bot | dry_run=%s | once=%s | max_active_trades=%s | trade_amount_usd=%.2f",
@@ -109,22 +147,37 @@ def main() -> None:
         config.max_active_trades,
         config.trade_amount_usd,
     )
+    safe_notify(
+        (
+            "OKX bot started\n"
+            f"Mode: {'DRY-RUN' if args.dry_run else 'LIVE'}\n"
+            f"Once: {args.once}\n"
+            f"Max active trades: {config.max_active_trades}\n"
+            f"Trade size: ${config.trade_amount_usd:.2f}"
+        )
+    )
 
     if args.once:
         runner.run_cycle()
         logger.info("Open positions: %s", runner.positions_report())
+        safe_notify(f"Open positions snapshot:\n{runner.positions_report()}")
         return
 
     while True:
         try:
             runner.run_cycle()
-            logger.info("Open positions: %s", runner.positions_report())
+            positions_snapshot = runner.positions_report()
+            logger.info("Open positions: %s", positions_snapshot)
+            if notifier.enabled and _bool_env("TELEGRAM_NOTIFY_POSITIONS", default=False):
+                safe_notify(f"Open positions snapshot:\n{positions_snapshot}")
             time.sleep(config.poll_interval_seconds)
         except KeyboardInterrupt:
             logger.info("Shutting down bot")
+            safe_notify("OKX bot stopped (KeyboardInterrupt).")
             return
         except Exception:
             logger.exception("Top-level bot loop failure")
+            safe_notify("Top-level bot loop failure. Check logs.")
             time.sleep(3)
 
 

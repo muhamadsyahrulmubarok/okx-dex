@@ -41,6 +41,12 @@ OKX_SECRET_KEY=your_secret
 OKX_PASSPHRASE=your_passphrase
 BASE_URL=https://www.okx.com
 OKX_SIMULATED=false
+
+# Telegram notifications (optional)
+TELEGRAM_ENABLED=false
+TELEGRAM_BOT_TOKEN=123456789:your_bot_token
+TELEGRAM_CHAT_ID=123456789
+TELEGRAM_NOTIFY_POSITIONS=false
 ```
 
 Edit `config.json` with your token rules.
@@ -105,6 +111,24 @@ Useful options:
 - `--once` : run one loop and exit
 - `--log-level DEBUG` : verbose logs
 
+### Telegram integration
+
+When `TELEGRAM_ENABLED=true`, the bot sends notifications to your chat:
+
+- startup/shutdown
+- BUY and SELL events (with reason, qty, price, mode)
+- symbol processing errors
+- optional per-cycle positions snapshot (`TELEGRAM_NOTIFY_POSITIONS=true`)
+
+How to get your values:
+
+1. Create a bot with `@BotFather` and copy the bot token.
+2. Start a chat with your bot (or add bot to group).
+3. Get `chat_id`:
+   - Open `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+   - Send a test message to the bot first
+   - Read `message.chat.id` from the response JSON
+
 ---
 
 ## Bot architecture
@@ -114,6 +138,7 @@ Useful options:
 - `okx_bot/engine.py` - signal engine + trade executor + bot loop cycle
 - `okx_bot/risk.py` - fixed size + max concurrent trade constraints
 - `okx_bot/storage.py` - SQLite persistence for open positions
+- `okx_bot/telegram.py` - Telegram Bot API notifications
 - `bot.py` - CLI entrypoint
 
 ---

@@ -11,26 +11,14 @@ from typing import Any
 
 import requests
 
-from okx_bot.client import OkxClient, OkxCredentials
-from okx_bot.config import BotConfig, load_config_dict
 from okx_bot.control_api import post_json
 from okx_bot.engine import BotRunner
+from okx_bot.runtime_factory import RuntimeBundle, build_runtime_bundle
 from okx_bot.storage import PositionStore
-from okx_bot.telegram import build_notifier
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _to_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if value is None:
-        return False
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class RuntimeConfigProvider:
@@ -63,48 +51,17 @@ class WorkerApp:
         self.store = PositionStore(self.positions_db_path)
         self._stop = False
 
-    def _build_bot_runtime(
-        self, runtime_payload: dict[str, Any], runner: BotRunner | None
-    ) -> tuple[BotConfig, OkxClient, bool, Any]:
+    def _build_bot_runtime(self, runtime_payload: dict[str, Any]) -> RuntimeBundle:
         settings = runtime_payload.get("settings") or {}
         tokens = runtime_payload.get("tokens") or []
-        bot_config_payload = {
-            "max_active_trades": settings.get("max_active_trades", 6),
-            "trade_amount_usd": settings.get("trade_amount_usd", 100),
-            "poll_interval_seconds": settings.get("poll_interval_seconds", 10),
-            "request_timeout_seconds": settings.get("request_timeout_seconds", 10),
-            "max_retries": settings.get("max_retries", 3),
-            "retry_backoff_seconds": settings.get("retry_backoff_seconds", 1.5),
-            "tokens": tokens,
-        }
-        config = load_config_dict(bot_config_payload)
-
-        simulated = _to_bool(settings.get("okx_simulated", False))
-        credentials = OkxCredentials(
-            api_key=self.okx_api_key,
-            secret_key=self.okx_secret_key,
-            passphrase=self.okx_passphrase,
-            base_url=self.okx_base_url,
-            simulated=simulated,
+        return build_runtime_bundle(
+            settings=settings,
+            tokens=tokens,
+            okx_api_key=self.okx_api_key,
+            okx_secret_key=self.okx_secret_key,
+            okx_passphrase=self.okx_passphrase,
+            okx_base_url=self.okx_base_url,
         )
-        client = OkxClient(
-            credentials=credentials,
-            timeout_seconds=config.request_timeout_seconds,
-            max_retries=config.max_retries,
-            retry_backoff_seconds=config.retry_backoff_seconds,
-        )
-        dry_run = _to_bool(settings.get("dry_run", True))
-        notifier = build_notifier(
-            enabled=_to_bool(settings.get("telegram_enabled", False)),
-            bot_token=settings.get("telegram_bot_token"),
-            chat_id=settings.get("telegram_chat_id"),
-            timeout_seconds=float(settings.get("telegram_timeout_seconds", 10.0)),
-            max_retries=int(settings.get("telegram_max_retries", 3)),
-            retry_backoff_seconds=float(
-                settings.get("telegram_retry_backoff_seconds", 1.5)
-            ),
-        )
-        return config, client, dry_run, notifier
 
     def _emit_trade_event(self, event: dict[str, Any]) -> None:
         payload = dict(event)
@@ -143,32 +100,30 @@ class WorkerApp:
                     time.sleep(1.0)
                     continue
 
-                config, client, dry_run, notifier = self._build_bot_runtime(
-                    runtime_payload, runner
-                )
-                last_poll = config.poll_interval_seconds
+                bundle = self._build_bot_runtime(runtime_payload)
+                last_poll = bundle.config.poll_interval_seconds
 
                 if runner is None:
                     runner = BotRunner(
-                        config=config,
-                        client=client,
+                        config=bundle.config,
+                        exchange=bundle.exchange,
                         store=self.store,
-                        dry_run=dry_run,
-                        notifier=notifier,
+                        dry_run=bundle.dry_run,
+                        notifier=bundle.notifier,
                         on_trade_event=self._emit_trade_event,
                         on_error_event=self._emit_error_event,
                     )
                 else:
                     runner.update_runtime(
-                        config=config,
-                        client=client,
-                        dry_run=dry_run,
-                        notifier=notifier,
+                        config=bundle.config,
+                        exchange=bundle.exchange,
+                        dry_run=bundle.dry_run,
+                        notifier=bundle.notifier,
                     )
 
                 runner.run_cycle()
                 self._heartbeat("RUNNING")
-                time.sleep(config.poll_interval_seconds)
+                time.sleep(bundle.config.poll_interval_seconds)
             except Exception as exc:
                 logger.exception("Worker loop failed")
                 self._emit_error_event(
